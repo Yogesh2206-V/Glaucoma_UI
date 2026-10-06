@@ -24,12 +24,10 @@
     --glaucoma-text: #b91c1c;
     --glaucoma-bg: #fef2f2;
     --glaucoma-border: #fecaca;
-    --glaucoma-dot: #ef4444;
 
     --normal-text: #15803d;
     --normal-bg: #f0fdf4;
     --normal-border: #bbf7d0;
-    --normal-dot: #22c55e;
 
     /* Shadows & Radii */
     --card-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
@@ -95,6 +93,18 @@ body {
     width: 100%;
     max-width: 580px;
     margin: 0 auto;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 /* Top Utility Bar */
@@ -191,6 +201,7 @@ body {
 
 /* Upload Dropzone */
 .upload-area {
+    display: block;
     border: 2px dashed var(--border-medium);
     background: var(--bg-card-subtle);
     border-radius: var(--radius-md);
@@ -218,13 +229,54 @@ body {
     font-size: clamp(0.92rem, 3vw, 1rem);
     font-weight: 700;
     color: var(--text-heading);
-    margin-bottom: 0.2rem;
+    margin-bottom: 0.25rem;
     word-break: break-word;
 }
 
-.upload-area p {
+.upload-subtext {
     font-size: 0.8rem;
     color: var(--text-muted);
+}
+
+/* Preview Inside Dropzone */
+.preview-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.input-preview-thumb {
+    width: 140px;
+    height: 140px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 2px solid var(--primary-blue);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.preview-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+}
+
+.preview-name {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-heading);
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.btn-change-image {
+    font-size: 0.75rem;
+    color: var(--primary-blue);
+    text-decoration: underline;
+    font-weight: 600;
 }
 
 /* Control Group */
@@ -279,7 +331,7 @@ body {
 /* Primary Button */
 .btn-primary {
     width: 100%;
-    min-height: 46px;
+    min-height: 48px;
     padding: 0.75rem 1rem;
     background: var(--primary-blue);
     color: #ffffff;
@@ -306,7 +358,7 @@ body {
 }
 
 .btn-primary:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
     box-shadow: none;
 }

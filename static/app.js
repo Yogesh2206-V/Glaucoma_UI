@@ -7,7 +7,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const themeText = document.getElementById('themeText');
     const htmlElement = document.documentElement;
 
-    // Load saved theme or default to light
     const savedTheme = localStorage.getItem('oculoscan_theme') || 'light';
     applyTheme(savedTheme);
 
@@ -32,6 +31,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // UI Elements
     const dropArea = document.getElementById('dropArea');
     const imageInput = document.getElementById('imageInput');
+    const dropEmptyState = document.getElementById('dropEmptyState');
+    const dropPreviewState = document.getElementById('dropPreviewState');
+    const inputPreviewImg = document.getElementById('inputPreviewImg');
+    const previewFileName = document.getElementById('previewFileName');
     const expectedClass = document.getElementById('expectedClass');
     const btnTest = document.getElementById('btnTest');
     const spinner = document.getElementById('spinner');
@@ -40,17 +43,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const confVal = document.getElementById('confVal');
     const accStatus = document.getElementById('accStatus');
     const resultImage = document.getElementById('resultImage');
-    const uploadTitle = document.getElementById('uploadTitle');
-
-    // Click to upload
-    dropArea.addEventListener('click', () => {
-        imageInput.click();
-    });
 
     // Drag and Drop
     ['dragenter', 'dragover'].forEach(name => {
         dropArea.addEventListener(name, (e) => {
             e.preventDefault();
+            e.stopPropagation();
             dropArea.classList.add('dragover');
         });
     });
@@ -58,34 +56,56 @@ document.addEventListener('DOMContentLoaded', () => {
     ['dragleave', 'drop'].forEach(name => {
         dropArea.addEventListener(name, (e) => {
             e.preventDefault();
+            e.stopPropagation();
             dropArea.classList.remove('dragover');
         });
     });
 
     dropArea.addEventListener('drop', (e) => {
         const files = e.dataTransfer.files;
-        if (files.length > 0) {
+        if (files && files.length > 0) {
             handleFileSelect(files[0]);
         }
     });
 
+    // File Input change
     imageInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
+        if (e.target.files && e.target.files.length > 0) {
             handleFileSelect(e.target.files[0]);
+        }
+    });
+
+    // Paste from clipboard support (Ctrl+V)
+    window.addEventListener('paste', (e) => {
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                const blob = items[i].getAsFile();
+                handleFileSelect(blob);
+                break;
+            }
         }
     });
 
     function handleFileSelect(file) {
         if (!file.type.startsWith('image/')) {
-            alert('Please select a valid image file.');
+            alert('Please select a valid image file (PNG, JPG, WEBP).');
             return;
         }
+
         selectedFile = file;
-        if (uploadTitle) {
-            uploadTitle.textContent = `Selected: ${file.name}`;
-        }
-        btnTest.disabled = false;
-        resultBox.style.display = 'none';
+
+        // Render preview inside dropzone immediately
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            inputPreviewImg.src = e.target.result;
+            previewFileName.textContent = file.name || 'Pasted Image';
+            dropEmptyState.style.display = 'none';
+            dropPreviewState.style.display = 'flex';
+            btnTest.disabled = false;
+            resultBox.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
     }
 
     // Run prediction
@@ -119,10 +139,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     accStatus.style.display = 'block';
                     if (expected.toLowerCase() === data.prediction.toLowerCase()) {
                         accStatus.className = 'accuracy-alert correct';
-                        accStatus.innerHTML = `✅ <strong>Accurate Prediction:</strong> Model matched actual (${expected}).`;
+                        accStatus.innerHTML = `✅ <strong>Accurate Match:</strong> Model correctly predicted <strong>${data.prediction}</strong> matching your actual label.`;
                     } else {
                         accStatus.className = 'accuracy-alert incorrect';
-                        accStatus.innerHTML = `❌ <strong>Mismatch:</strong> Model predicted ${data.prediction}, but actual was ${expected}.`;
+                        accStatus.innerHTML = `❌ <strong>Diagnostic Mismatch:</strong> Model predicted <strong>${data.prediction}</strong> (${data.confidence}%), but actual label is <strong>${expected}</strong>.`;
                     }
                 }
 
@@ -136,8 +156,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert('Prediction error: ' + (data.error || 'Unknown error'));
             }
         } catch (err) {
-            console.error(err);
-            alert('Failed to connect to backend server.');
+            console.error('Inference error:', err);
+            alert('Failed to connect to backend server. Make sure the server is running.');
         } finally {
             spinner.style.display = 'none';
             btnTest.disabled = false;
