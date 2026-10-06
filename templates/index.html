@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <!-- Ambient Background Glows -->
@@ -41,7 +41,7 @@
         </header>
 
         <!-- Main Card -->
-        <main class="card glassmorphism">
+        <main class="card">
             <!-- Native HTML5 Label Upload Dropzone -->
             <input type="file" id="imageInput" accept="image/png, image/jpeg, image/jpg, image/webp, image/bmp" class="visually-hidden">
             
@@ -141,6 +141,6 @@
         </main>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

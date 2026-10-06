@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 import cv2
 import onnxruntime as ort
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 
 # Base paths for local and cloud/serverless environments
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +29,6 @@ def get_session():
     global onnx_session
     if onnx_session is None:
         try:
-            # Optimize runtime for CPU
             opts = ort.SessionOptions()
             opts.intra_op_num_threads = 2
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -114,10 +113,8 @@ def run_inference(img_orig, conf_thresh=0.25, iou_thresh=0.45):
             color = COLORS.get(cls_name, (255, 255, 0))
 
             x, y, w, h = box
-            # Draw rectangle
             cv2.rectangle(img_bgr, (x, y), (x + w, y + h), color, 3)
 
-            # Draw label banner
             label = f"{cls_name} {round(conf * 100, 1)}%"
             font_scale = max(0.5, min(orig_w, orig_h) / 800.0)
             thickness = max(1, int(font_scale * 2))
@@ -133,12 +130,10 @@ def run_inference(img_orig, conf_thresh=0.25, iou_thresh=0.45):
                 'box': {'x': x, 'y': y, 'w': w, 'h': h}
             })
 
-    # Sort detections by confidence
     detections.sort(key=lambda d: d['confidence'], reverse=True)
     primary_class = detections[0]['class'] if detections else "No Detection"
     top_confidence = detections[0]['confidence'] if detections else 0.0
 
-    # Encode annotated image to JPEG base64
     _, buf = cv2.imencode('.jpg', img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
     img_b64 = base64.b64encode(buf.tobytes()).decode('utf-8')
 
@@ -147,6 +142,10 @@ def run_inference(img_orig, conf_thresh=0.25, iou_thresh=0.45):
 @app.route('/')
 def home():
     return render_template('index.html')
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(STATIC_DIR, filename)
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -158,7 +157,6 @@ def predict():
         return jsonify({'error': 'No image selected.'}), 400
 
     try:
-        # Read image
         image_bytes = file.read()
         pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
 
