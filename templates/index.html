@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <title>OculoScan - Glaucoma AI Model Tester</title>
+    <!-- Modern Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Top Utility Bar -->
+        <div class="top-bar">
+            <div class="model-badge">
+                <span class="badge-dot"></span>
+                <span>Model: <strong>best.pt</strong> (YOLO11)</span>
+            </div>
+            <button class="theme-toggle" id="themeToggle" title="Toggle Light/Dark Theme">
+                <span id="themeIcon">🌙</span>
+                <span id="themeText">Dark</span>
+            </button>
+        </div>
+
+        <!-- Header -->
+        <header class="header">
+            <div class="brand-badge">Medical AI Diagnostic</div>
+            <h1>OculoScan Model Tester</h1>
+            <p>Upload a fundus eye scan to test your YOLO model and verify diagnosis accuracy.</p>
+        </header>
+
+        <!-- Main Card -->
+        <main class="card">
+            <!-- Upload Dropzone -->
+            <div class="upload-area" id="dropArea">
+                <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                <div class="upload-icon">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                </div>
+                <h3 id="uploadTitle">Click or Drag Fundus Image</h3>
+                <p>Supports JPG, PNG, DICOM (Max 32MB)</p>
+            </div>
+
+            <!-- Ground Truth Selector (Accuracy Checker) -->
+            <div class="control-group">
+                <label for="expectedClass" class="field-label">
+                    Expected Label <span class="label-hint">(Select actual class to test accuracy)</span>
+                </label>
+                <div class="select-wrapper">
+                    <select id="expectedClass">
+                        <option value="">-- Optional: Select Actual Class --</option>
+                        <option value="Glaucoma">⚠️ Glaucoma (Positive Case)</option>
+                        <option value="Normal">✅ Normal (Healthy Eye)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Action Button -->
+            <button class="btn-primary" id="btnTest" disabled>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <span>Run Model Prediction</span>
+            </button>
+
+            <!-- Loading Spinner -->
+            <div class="spinner" id="spinner" style="display: none;">
+                <div class="loader"></div>
+                <p>Analyzing image with neural network...</p>
+            </div>
+
+            <!-- Result Section -->
+            <section class="result-box" id="resultBox" style="display: none;">
+                <div class="result-grid">
+                    <div class="result-card">
+                        <span class="card-label">Diagnosis</span>
+                        <div class="prediction-pill" id="predBadge">--</div>
+                    </div>
+                    <div class="result-card">
+                        <span class="card-label">Model Confidence</span>
+                        <div class="confidence-val" id="confVal">--%</div>
+                    </div>
+                </div>
+
+                <!-- Accuracy Match Alert -->
+                <div class="accuracy-alert" id="accStatus" style="display: none;"></div>
+
+                <!-- Result Image Preview -->
+                <div class="image-section">
+                    <span class="image-label">Annotated Optical Detection</span>
+                    <div class="image-frame">
+                        <img id="resultImage" src="" alt="Model Prediction Result">
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
