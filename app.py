@@ -1,34 +1,148 @@
 import os
 import io
 import base64
+import numpy as np
 from PIL import Image
 import cv2
-from ultralytics import YOLO
+import onnxruntime as ort
 from flask import Flask, render_template, request, jsonify
 
 # Base paths for local and cloud/serverless environments
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
-MODEL_PATH = os.path.join(BASE_DIR, 'best.pt')
+MODEL_ONNX_PATH = os.path.join(BASE_DIR, 'best.onnx')
 
 app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
 
-# Lazy/global load model
-model = None
-def get_model():
-    global model
-    if model is None:
+# Class mappings for Glaucoma model
+CLASSES = {0: 'Glaucoma', 1: 'Normal'}
+COLORS = {
+    'Glaucoma': (0, 0, 230),  # Bright Red in BGR
+    'Normal': (0, 200, 40)    # Bright Green in BGR
+}
+
+# Lazy load ONNX session
+onnx_session = None
+
+def get_session():
+    global onnx_session
+    if onnx_session is None:
         try:
-            model = YOLO(MODEL_PATH)
-            print("✅ YOLO Model loaded successfully from:", MODEL_PATH)
+            # Optimize runtime for CPU
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = 2
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            onnx_session = ort.InferenceSession(MODEL_ONNX_PATH, opts, providers=['CPUExecutionProvider'])
+            print("[INFO] ONNX Model loaded successfully from:", MODEL_ONNX_PATH)
         except Exception as e:
-            print("❌ Error loading model:", e)
-            model = None
-    return model
+            print("[ERROR] Error loading ONNX model:", e)
+            onnx_session = None
+    return onnx_session
 
 # Warm up model on startup
-get_model()
+get_session()
+
+def run_inference(img_orig, conf_thresh=0.25, iou_thresh=0.45):
+    session = get_session()
+    if session is None:
+        raise RuntimeError("Model session is not loaded.")
+
+    orig_w, orig_h = img_orig.size
+
+    # Letterbox resize to 640x640 maintaining aspect ratio
+    scale = min(640.0 / orig_w, 640.0 / orig_h)
+    nw, nh = int(round(orig_w * scale)), int(round(orig_h * scale))
+    img_resized = img_orig.resize((nw, nh), Image.Resampling.BILINEAR)
+
+    pad_w = (640 - nw) // 2
+    pad_h = (640 - nh) // 2
+
+    canvas = Image.new('RGB', (640, 640), (114, 114, 114))
+    canvas.paste(img_resized, (pad_w, pad_h))
+
+    # Preprocess
+    img_np = np.array(canvas, dtype=np.float32) / 255.0
+    img_np = np.transpose(img_np, (2, 0, 1))  # Shape (3, 640, 640)
+    img_np = np.expand_dims(img_np, axis=0)   # Shape (1, 3, 640, 640)
+
+    # Run ONNX inference
+    input_name = session.get_inputs()[0].name
+    outputs = session.run(None, {input_name: img_np})[0]  # Shape (1, 6, 8400)
+    predictions = np.transpose(outputs[0])                # Shape (8400, 6)
+
+    boxes = []
+    confidences = []
+    class_ids = []
+
+    for row in predictions:
+        cx, cy, w, h = row[:4]
+        scores = row[4:]
+        cls_id = int(np.argmax(scores))
+        conf = float(scores[cls_id])
+
+        if conf >= conf_thresh:
+            # Map coordinates back to original image scale
+            x1 = (cx - w / 2.0 - pad_w) / scale
+            y1 = (cy - h / 2.0 - pad_h) / scale
+            x2 = (cx + w / 2.0 - pad_w) / scale
+            y2 = (cy + h / 2.0 - pad_h) / scale
+
+            x1 = max(0, min(orig_w, x1))
+            y1 = max(0, min(orig_h, y1))
+            w_box = max(0, min(orig_w - x1, x2 - x1))
+            h_box = max(0, min(orig_h - y1, y2 - y1))
+
+            boxes.append([int(x1), int(y1), int(w_box), int(h_box)])
+            confidences.append(conf)
+            class_ids.append(cls_id)
+
+    # Non-Maximum Suppression
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_thresh, iou_thresh)
+    detections = []
+    
+    # Convert PIL to OpenCV BGR for high quality bounding box drawing
+    img_bgr = cv2.cvtColor(np.array(img_orig), cv2.COLOR_RGB2BGR)
+
+    if len(indices) > 0:
+        flat_indices = indices.flatten() if hasattr(indices, 'flatten') else indices
+        for i in flat_indices:
+            box = boxes[i]
+            conf = confidences[i]
+            cls_id = class_ids[i]
+            cls_name = CLASSES.get(cls_id, f"Class {cls_id}")
+            color = COLORS.get(cls_name, (255, 255, 0))
+
+            x, y, w, h = box
+            # Draw rectangle
+            cv2.rectangle(img_bgr, (x, y), (x + w, y + h), color, 3)
+
+            # Draw label banner
+            label = f"{cls_name} {round(conf * 100, 1)}%"
+            font_scale = max(0.5, min(orig_w, orig_h) / 800.0)
+            thickness = max(1, int(font_scale * 2))
+            (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+
+            y_text = max(y, th + 10)
+            cv2.rectangle(img_bgr, (x, y_text - th - 8), (x + tw + 10, y_text + 4), color, -1)
+            cv2.putText(img_bgr, label, (x + 5, y_text - 4), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+            detections.append({
+                'class': cls_name,
+                'confidence': round(conf * 100, 1),
+                'box': {'x': x, 'y': y, 'w': w, 'h': h}
+            })
+
+    # Sort detections by confidence
+    detections.sort(key=lambda d: d['confidence'], reverse=True)
+    primary_class = detections[0]['class'] if detections else "No Detection"
+    top_confidence = detections[0]['confidence'] if detections else 0.0
+
+    # Encode annotated image to JPEG base64
+    _, buf = cv2.imencode('.jpg', img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    img_b64 = base64.b64encode(buf.tobytes()).decode('utf-8')
+
+    return primary_class, top_confidence, detections, f"data:image/jpeg;base64,{img_b64}"
 
 @app.route('/')
 def home():
@@ -36,10 +150,6 @@ def home():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    yolo_model = get_model()
-    if yolo_model is None:
-        return jsonify({'error': 'Model could not be loaded.'}), 500
-
     if 'image' not in request.files:
         return jsonify({'error': 'No image uploaded.'}), 400
 
@@ -52,50 +162,22 @@ def predict():
         image_bytes = file.read()
         pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
 
-        # Run inference
-        results = yolo_model(pil_img, conf=0.25)
-        res = results[0]
-
-        # Extract predictions
-        detections = []
-        primary_class = "No Detection"
-        confidence_pct = 0.0
-
-        if len(res.boxes) > 0:
-            top_box = res.boxes[0]
-            cls_id = int(top_box.cls[0].item())
-            primary_class = yolo_model.names.get(cls_id, f"Class {cls_id}")
-            confidence_pct = round(float(top_box.conf[0].item()) * 100, 1)
-
-            for b in res.boxes:
-                c_id = int(b.cls[0].item())
-                detections.append({
-                    'class': yolo_model.names.get(c_id, f"Class {c_id}"),
-                    'confidence': round(float(b.conf[0].item()) * 100, 1)
-                })
-
-        # Render annotated image
-        annotated_bgr = res.plot()
-        annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
-        annotated_pil = Image.fromarray(annotated_rgb)
-
-        # Convert to base64
-        buf = io.BytesIO()
-        annotated_pil.save(buf, format='JPEG')
-        img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+        primary_class, confidence_pct, detections, img_url = run_inference(pil_img, conf_thresh=0.25)
 
         return jsonify({
             'success': True,
             'prediction': primary_class,
             'confidence': confidence_pct,
             'detections': detections,
-            'image_url': f"data:image/jpeg;base64,{img_b64}"
+            'image_url': img_url
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print(f"🚀 Web App starting at http://localhost:{port}")
+    print(f"[INFO] Web App starting at http://localhost:{port}")
     app.run(host='0.0.0.0', port=port, debug=False)
