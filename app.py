@@ -6,16 +6,29 @@ import cv2
 from ultralytics import YOLO
 from flask import Flask, render_template, request, jsonify
 
-app = Flask(__name__)
+# Base paths for local and cloud/serverless environments
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
+MODEL_PATH = os.path.join(BASE_DIR, 'best.pt')
 
-# Load YOLO model
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'best.pt')
-try:
-    model = YOLO(MODEL_PATH)
-    print("✅ YOLO Model loaded successfully from:", MODEL_PATH)
-except Exception as e:
-    print("❌ Error loading model:", e)
-    model = None
+app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
+
+# Lazy/global load model
+model = None
+def get_model():
+    global model
+    if model is None:
+        try:
+            model = YOLO(MODEL_PATH)
+            print("✅ YOLO Model loaded successfully from:", MODEL_PATH)
+        except Exception as e:
+            print("❌ Error loading model:", e)
+            model = None
+    return model
+
+# Warm up model on startup
+get_model()
 
 @app.route('/')
 def home():
@@ -23,7 +36,8 @@ def home():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    if model is None:
+    yolo_model = get_model()
+    if yolo_model is None:
         return jsonify({'error': 'Model could not be loaded.'}), 500
 
     if 'image' not in request.files:
@@ -39,7 +53,7 @@ def predict():
         pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
 
         # Run inference
-        results = model(pil_img, conf=0.25)
+        results = yolo_model(pil_img, conf=0.25)
         res = results[0]
 
         # Extract predictions
@@ -50,13 +64,13 @@ def predict():
         if len(res.boxes) > 0:
             top_box = res.boxes[0]
             cls_id = int(top_box.cls[0].item())
-            primary_class = model.names.get(cls_id, f"Class {cls_id}")
+            primary_class = yolo_model.names.get(cls_id, f"Class {cls_id}")
             confidence_pct = round(float(top_box.conf[0].item()) * 100, 1)
 
             for b in res.boxes:
                 c_id = int(b.cls[0].item())
                 detections.append({
-                    'class': model.names.get(c_id, f"Class {c_id}"),
+                    'class': yolo_model.names.get(c_id, f"Class {c_id}"),
                     'confidence': round(float(b.conf[0].item()) * 100, 1)
                 })
 
@@ -82,5 +96,6 @@ def predict():
         return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    print("🚀 Web App starting at http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Web App starting at http://localhost:{port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
