@@ -3,59 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-    <title>OculoScan - Glaucoma AI Model Tester</title>
-    <!-- Modern Font -->
+    <title>OculoScan - Glaucoma AI Model Diagnostic Studio</title>
+    <!-- Modern Font: Plus Jakarta Sans & JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+    <!-- Ambient Background Glows -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
     <div class="container">
         <!-- Top Utility Bar -->
         <div class="top-bar">
             <div class="model-badge">
-                <span class="badge-dot"></span>
-                <span>Model: <strong>best.onnx</strong> (YOLO11)</span>
+                <span class="badge-dot pulse"></span>
+                <span>Model: <strong>best.onnx</strong> (YOLO11n)</span>
             </div>
-            <button type="button" class="theme-toggle" id="themeToggle" title="Toggle Light/Dark Theme">
+            <button type="button" class="theme-toggle" id="themeToggle" title="Toggle Theme">
                 <span id="themeIcon">🌙</span>
-                <span id="themeText">Dark</span>
+                <span id="themeText">Dark Mode</span>
             </button>
         </div>
 
         <!-- Header -->
         <header class="header">
-            <div class="brand-badge">Medical AI Diagnostic</div>
+            <div class="brand-badge">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                </svg>
+                Ocular AI Diagnostic
+            </div>
             <h1>OculoScan Model Tester</h1>
-            <p>Upload a fundus eye scan to test your YOLO model and verify diagnosis accuracy.</p>
+            <p>Upload a retinal fundus scan to run neural network diagnosis and verify detection accuracy.</p>
         </header>
 
         <!-- Main Card -->
-        <main class="card">
-            <!-- Native HTML5 Label Upload Dropzone (Works 100% reliably on all browsers & mobile) -->
+        <main class="card glassmorphism">
+            <!-- Native HTML5 Label Upload Dropzone -->
             <input type="file" id="imageInput" accept="image/png, image/jpeg, image/jpg, image/webp, image/bmp" class="visually-hidden">
             
             <label for="imageInput" class="upload-area" id="dropArea">
                 <!-- Empty state icon & text -->
-                <div id="dropEmptyState">
-                    <div class="upload-icon">
-                        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <div id="dropEmptyState" class="drop-empty">
+                    <div class="upload-icon-wrapper">
+                        <svg class="upload-svg" width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="17 8 12 3 7 8"></polyline>
                             <line x1="12" y1="3" x2="12" y2="15"></line>
                         </svg>
                     </div>
-                    <h3 id="uploadTitle">Click to Browse or Drop Image Here</h3>
-                    <p class="upload-subtext">Supports PNG, JPG, JPEG, WEBP (or Paste with Ctrl+V)</p>
+                    <h3 id="uploadTitle">Click or Drag & Drop Fundus Scan</h3>
+                    <p class="upload-subtext">Supports JPG, PNG, WEBP &bull; Paste with <kbd>Ctrl+V</kbd></p>
                 </div>
 
-                <!-- Live Upload Preview (Shown immediately when file selected) -->
+                <!-- Live Upload Preview -->
                 <div id="dropPreviewState" class="preview-container" style="display: none;">
-                    <img id="inputPreviewImg" src="" alt="Selected Fundus Scan" class="input-preview-thumb">
+                    <div class="preview-thumb-frame">
+                        <img id="inputPreviewImg" src="" alt="Selected Fundus Scan" class="input-preview-thumb">
+                        <div class="thumb-overlay">Change Image</div>
+                    </div>
                     <div class="preview-info">
                         <span id="previewFileName" class="preview-name">image.jpg</span>
-                        <span class="btn-change-image">Tap to change image</span>
+                        <span class="btn-change-image">Tap anywhere to replace</span>
                     </div>
                 </div>
             </label>
@@ -63,12 +75,13 @@
             <!-- Ground Truth Selector (Accuracy Checker) -->
             <div class="control-group">
                 <label for="expectedClass" class="field-label">
-                    Expected Actual Label <span class="label-hint">(Select actual diagnosis to score accuracy)</span>
+                    <span>Expected Actual Class</span>
+                    <span class="label-hint">(Optional verification)</span>
                 </label>
                 <div class="select-wrapper">
                     <select id="expectedClass">
-                        <option value="">-- Optional: Select Actual Class --</option>
-                        <option value="Glaucoma">⚠️ Glaucoma (Pathological Eye)</option>
+                        <option value="">-- Select Expected Class to Check Accuracy --</option>
+                        <option value="Glaucoma">⚠️ Glaucoma (Pathology Case)</option>
                         <option value="Normal">✅ Normal (Healthy Eye)</option>
                     </select>
                 </div>
@@ -76,29 +89,38 @@
 
             <!-- Action Button -->
             <button type="button" class="btn-primary" id="btnTest" disabled>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="11" cy="11" r="8"></circle>
                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
-                <span>Run Model Prediction</span>
+                <span>Run Diagnostic Inference</span>
             </button>
 
             <!-- Loading Spinner -->
             <div class="spinner" id="spinner" style="display: none;">
-                <div class="loader"></div>
-                <p>Analyzing retinal features with YOLO model...</p>
+                <div class="loader">
+                    <div class="loader-ring"></div>
+                    <div class="loader-dot"></div>
+                </div>
+                <p>Analyzing optic nerve features with YOLO11...</p>
             </div>
 
             <!-- Result Section -->
             <section class="result-box" id="resultBox" style="display: none;">
                 <div class="result-grid">
-                    <div class="result-card">
-                        <span class="card-label">Diagnosis</span>
+                    <!-- Diagnosis Card -->
+                    <div class="result-card diag-card">
+                        <span class="card-label">Classification</span>
                         <div class="prediction-pill" id="predBadge">--</div>
                     </div>
-                    <div class="result-card">
-                        <span class="card-label">Confidence</span>
+                    
+                    <!-- Confidence Card with Meter -->
+                    <div class="result-card conf-card">
+                        <span class="card-label">Confidence Score</span>
                         <div class="confidence-val" id="confVal">--%</div>
+                        <div class="meter-bar">
+                            <div class="meter-fill" id="confMeterFill"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -107,7 +129,10 @@
 
                 <!-- Result Image Preview -->
                 <div class="image-section">
-                    <span class="image-label">Annotated Detection Output:</span>
+                    <div class="image-section-header">
+                        <span class="image-label">Annotated Optical Detection</span>
+                        <span class="box-tag">YOLO Bounding Box</span>
+                    </div>
                     <div class="image-frame">
                         <img id="resultImage" src="" alt="Model Prediction Result">
                     </div>

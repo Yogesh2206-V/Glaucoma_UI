@@ -21,10 +21,10 @@ document.addEventListener('DOMContentLoaded', () => {
         htmlElement.setAttribute('data-theme', theme);
         if (theme === 'dark') {
             themeIcon.textContent = '☀️';
-            themeText.textContent = 'Light';
+            themeText.textContent = 'Light Mode';
         } else {
             themeIcon.textContent = '🌙';
-            themeText.textContent = 'Dark';
+            themeText.textContent = 'Dark Mode';
         }
     }
 
@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultBox = document.getElementById('resultBox');
     const predBadge = document.getElementById('predBadge');
     const confVal = document.getElementById('confVal');
+    const confMeterFill = document.getElementById('confMeterFill');
     const accStatus = document.getElementById('accStatus');
     const resultImage = document.getElementById('resultImage');
 
@@ -117,6 +118,10 @@ document.addEventListener('DOMContentLoaded', () => {
         resultBox.style.display = 'none';
         accStatus.style.display = 'none';
 
+        if (confMeterFill) {
+            confMeterFill.style.width = '0%';
+        }
+
         const formData = new FormData();
         formData.append('image', selectedFile);
 
@@ -128,10 +133,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
 
             if (data.success) {
-                predBadge.textContent = data.prediction;
-                predBadge.className = 'prediction-pill ' + (data.prediction.toLowerCase() === 'glaucoma' ? 'glaucoma' : 'normal');
+                const isGlaucoma = data.prediction.toLowerCase() === 'glaucoma';
+                const isNormal = data.prediction.toLowerCase() === 'normal';
+
+                predBadge.innerHTML = (isGlaucoma ? '⚠️ ' : (isNormal ? '✅ ' : '')) + data.prediction;
+                predBadge.className = 'prediction-pill ' + (isGlaucoma ? 'glaucoma' : (isNormal ? 'normal' : ''));
                 confVal.textContent = `${data.confidence}%`;
                 resultImage.src = data.image_url;
+
+                // Animate meter fill
+                if (confMeterFill) {
+                    setTimeout(() => {
+                        confMeterFill.style.width = `${Math.min(100, Math.max(5, data.confidence))}%`;
+                    }, 50);
+                }
 
                 // Check accuracy if expected class was chosen
                 const expected = expectedClass.value;
@@ -139,10 +154,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     accStatus.style.display = 'block';
                     if (expected.toLowerCase() === data.prediction.toLowerCase()) {
                         accStatus.className = 'accuracy-alert correct';
-                        accStatus.innerHTML = `✅ <strong>Accurate Match:</strong> Model correctly predicted <strong>${data.prediction}</strong> matching your actual label.`;
+                        accStatus.innerHTML = `✅ <strong>Accurate Diagnosis:</strong> Model matched expected label (${expected}) with ${data.confidence}% confidence.`;
                     } else {
                         accStatus.className = 'accuracy-alert incorrect';
-                        accStatus.innerHTML = `❌ <strong>Diagnostic Mismatch:</strong> Model predicted <strong>${data.prediction}</strong> (${data.confidence}%), but actual label is <strong>${expected}</strong>.`;
+                        accStatus.innerHTML = `❌ <strong>Diagnostic Mismatch:</strong> Model classified as <strong>${data.prediction}</strong> (${data.confidence}%), but actual is <strong>${expected}</strong>.`;
                     }
                 }
 
