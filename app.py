@@ -1,11 +1,43 @@
 import os
 import io
 import base64
+import datetime
 import numpy as np
 from PIL import Image
 import cv2
 import onnxruntime as ort
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# MongoDB Configuration
+MONGO_URI = os.environ.get(
+    'MONGO_URI',
+    'mongodb+srv://yogesh12345:Yogeshmkce251@cluster0.43npwmp.mongodb.net/?appName=Cluster0'
+)
+MONGO_DB_NAME = os.environ.get('MONGO_DB_NAME', 'glaucoma_db')
+
+mongo_client = None
+db = None
+scans_collection = None
+
+def get_db_collection():
+    global mongo_client, db, scans_collection
+    if scans_collection is not None:
+        return scans_collection
+    try:
+        from pymongo import MongoClient
+        mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=4000)
+        mongo_client.admin.command('ping')
+        db = mongo_client[MONGO_DB_NAME]
+        scans_collection = db['scans']
+        print(f"[INFO] MongoDB Atlas connected successfully. Database: {MONGO_DB_NAME}")
+        return scans_collection
+    except Exception as e:
+        print(f"[WARNING] MongoDB Atlas connection error: {e}")
+        return None
 
 # Base paths for local and cloud/serverless environments
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +73,7 @@ def get_session():
 
 # Warm up model on startup
 get_session()
+get_db_collection()
 
 def run_inference(img_orig, conf_thresh=0.25, iou_thresh=0.45):
     session = get_session()
@@ -156,18 +189,43 @@ def predict():
     if file.filename == '':
         return jsonify({'error': 'No image selected.'}), 400
 
+    expected_class = request.form.get('expected_class', '').strip()
+
     try:
         image_bytes = file.read()
         pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
 
         primary_class, confidence_pct, detections, img_url = run_inference(pil_img, conf_thresh=0.25)
 
+        # Save record to MongoDB Atlas
+        mongo_doc_id = None
+        try:
+            col = get_db_collection()
+            if col is not None:
+                record = {
+                    'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    'filename': file.filename,
+                    'prediction': primary_class,
+                    'confidence': confidence_pct,
+                    'expected_class': expected_class if expected_class else None,
+                    'accuracy_match': (primary_class.lower() == expected_class.lower()) if expected_class else None,
+                    'detections_count': len(detections),
+                    'detections': detections
+                }
+                res = col.insert_one(record)
+                mongo_doc_id = str(res.inserted_id)
+                print(f"[INFO] Scan result saved to MongoDB with ID: {mongo_doc_id}")
+        except Exception as mongo_err:
+            print(f"[WARNING] Could not save record to MongoDB: {mongo_err}")
+
         return jsonify({
             'success': True,
             'prediction': primary_class,
             'confidence': confidence_pct,
             'detections': detections,
-            'image_url': img_url
+            'image_url': img_url,
+            'db_saved': mongo_doc_id is not None,
+            'record_id': mongo_doc_id
         })
 
     except Exception as e:
@@ -175,7 +233,38 @@ def predict():
         traceback.print_exc()
         return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
 
+@app.route('/api/db-status', methods=['GET'])
+def db_status():
+    col = get_db_collection()
+    if col is not None:
+        try:
+            count = col.count_documents({})
+            return jsonify({
+                'status': 'connected',
+                'database': MONGO_DB_NAME,
+                'collection': 'scans',
+                'total_records': count
+            })
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+    return jsonify({'status': 'disconnected', 'message': 'Could not connect to MongoDB Atlas'}), 503
+
+@app.route('/api/history', methods=['GET'])
+def history():
+    col = get_db_collection()
+    if col is None:
+        return jsonify({'error': 'MongoDB not connected'}), 503
+    try:
+        limit = min(int(request.args.get('limit', 10)), 50)
+        docs = list(col.find({}, {'_id': 1, 'timestamp': 1, 'filename': 1, 'prediction': 1, 'confidence': 1, 'expected_class': 1}).sort('timestamp', -1).limit(limit))
+        for d in docs:
+            d['id'] = str(d.pop('_id'))
+        return jsonify({'success': True, 'records': docs})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"[INFO] Web App starting at http://localhost:{port}")
     app.run(host='0.0.0.0', port=port, debug=False)
+

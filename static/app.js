@@ -124,6 +124,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const formData = new FormData();
         formData.append('image', selectedFile);
+        if (expectedClass && expectedClass.value) {
+            formData.append('expected_class', expectedClass.value);
+        }
 
         try {
             const response = await fetch('/predict', {
