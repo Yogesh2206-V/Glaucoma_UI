@@ -25,9 +25,22 @@ MONGO_DB_NAME = os.environ.get('MONGO_DB_NAME', 'glaucoma_db')
 mongo_client = None
 db = None
 scans_collection = None
+tonometer_collection = None
 
-# In-memory fallback in case MongoDB has transient network issues
+# In-memory fallbacks in case MongoDB has transient network issues
 local_patient_records = []
+local_tonometer_readings = []
+
+latest_tonometer_reading = {
+    'iop': 16.5,
+    'raw_adc': None,
+    'status': 'Normal',
+    'risk_level': 'Normal Pressure (10-21 mmHg)',
+    'eye_type': 'OD (Right Eye)',
+    'patient_id': None,
+    'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    'device_id': 'ESP32-BLE-Tonometer'
+}
 
 def get_db_collection():
     global mongo_client, db, scans_collection
@@ -44,6 +57,36 @@ def get_db_collection():
     except Exception as e:
         print(f"[WARNING] MongoDB Atlas connection error: {e}")
         return None
+
+def get_tonometer_collection():
+    global mongo_client, db, tonometer_collection
+    if tonometer_collection is not None:
+        return tonometer_collection
+    try:
+        from pymongo import MongoClient
+        if mongo_client is None:
+            mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=4000)
+            mongo_client.admin.command('ping')
+            db = mongo_client[MONGO_DB_NAME]
+        tonometer_collection = db['tonometer_readings']
+        return tonometer_collection
+    except Exception as e:
+        print(f"[WARNING] MongoDB tonometer collection error: {e}")
+        return None
+
+def classify_iop(iop_val):
+    try:
+        val = float(iop_val)
+    except (TypeError, ValueError):
+        val = 18.0
+    if val < 10.0:
+        return 'Hypotony', 'Low Pressure (<10 mmHg)', 'alert-warning'
+    elif val <= 21.0:
+        return 'Normal', 'Normal Pressure (10-21 mmHg)', 'alert-normal'
+    elif val <= 24.0:
+        return 'Borderline', 'Borderline Elevated (21-24 mmHg - Close Monitor)', 'alert-warning'
+    else:
+        return 'High Risk', 'High Glaucoma Risk (>24 mmHg - Ocular Hypertension)', 'alert-danger'
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -894,9 +937,321 @@ def db_status():
         'glaucoma_records': sum(1 for r in local_patient_records if r.get('prediction', '').lower() == 'glaucoma')
     }), 200
 
+# ==============================================================================
+# PATIENT HISTORY ENDPOINTS
+# ==============================================================================
+
 @app.route('/api/history', methods=['GET'])
-def history():
+@app.route('/api/patient-history', methods=['GET'])
+@app.route('/api/patients/history', methods=['GET'])
+def patient_history():
+    """Retrieve all patient records with optional query filtering (?disease=glaucoma, ?search=..., ?sort=..., ?limit=...)."""
     return get_patients()
+
+@app.route('/api/patient-history/<patient_id>', methods=['GET'])
+def single_patient_longitudinal_history(patient_id):
+    """Retrieve full longitudinal history for a specific patient ID, including all scans and tonometer readings."""
+    col = get_db_collection()
+    ton_col = get_tonometer_collection()
+    
+    patient_scans = []
+    tonometer_readings = []
+    
+    # Fetch scans from MongoDB
+    if col is not None:
+        try:
+            query = {
+                '$or': [
+                    {'patient_id': patient_id},
+                    {'id': patient_id}
+                ]
+            }
+            if ObjectId.is_valid(patient_id):
+                query['$or'].append({'_id': ObjectId(patient_id)})
+                
+            cursor = col.find(query).sort('timestamp', -1)
+            for d in cursor:
+                d['id'] = str(d.pop('_id'))
+                patient_scans.append(d)
+        except Exception as e:
+            print(f"[WARNING] Single patient history lookup error: {e}")
+
+    # Fallback to local memory if empty
+    if not patient_scans:
+        patient_scans = [
+            r for r in local_patient_records
+            if r.get('patient_id') == patient_id or r.get('id') == patient_id
+        ]
+
+    if not patient_scans:
+        return jsonify({'error': f'No records found for Patient ID: {patient_id}'}), 404
+
+    # Fetch associated tonometer pressure measurements
+    if ton_col is not None:
+        try:
+            ton_cursor = ton_col.find({'patient_id': patient_id}).sort('timestamp', -1).limit(50)
+            for t in ton_cursor:
+                t['id'] = str(t.pop('_id'))
+                tonometer_readings.append(t)
+        except Exception as e:
+            print(f"[WARNING] Tonometer history lookup error: {e}")
+
+    if not tonometer_readings:
+        tonometer_readings = [
+            t for t in local_tonometer_readings
+            if t.get('patient_id') == patient_id
+        ]
+
+    # Calculate summary IOP statistics
+    all_iops = [float(s.get('iop', 0)) for s in patient_scans if s.get('iop') is not None]
+    all_iops += [float(t.get('iop', 0)) for t in tonometer_readings if t.get('iop') is not None]
+    
+    latest_scan = patient_scans[0]
+    avg_iop = round(sum(all_iops) / len(all_iops), 1) if all_iops else latest_scan.get('iop', 18.0)
+    max_iop = max(all_iops) if all_iops else latest_scan.get('iop', 18.0)
+    status_label, risk_desc, _ = classify_iop(avg_iop)
+
+    return jsonify({
+        'success': True,
+        'patient_id': patient_id,
+        'patient_name': latest_scan.get('patient_name', f'Patient {patient_id}'),
+        'age': latest_scan.get('age', 50),
+        'gender': latest_scan.get('gender', 'Unspecified'),
+        'eye_type': latest_scan.get('eye_type', 'OD (Right Eye)'),
+        'current_diagnosis': latest_scan.get('prediction', 'Unknown'),
+        'confidence': latest_scan.get('confidence', 0.0),
+        'severity': latest_scan.get('severity', 'Evaluation completed'),
+        'average_iop': avg_iop,
+        'peak_iop': max_iop,
+        'iop_risk_classification': risk_desc,
+        'total_scans_recorded': len(patient_scans),
+        'scans_history': patient_scans,
+        'tonometer_readings': tonometer_readings
+    })
+
+# ==============================================================================
+# BLE TONOMETER & PRESSURE SENSOR ENDPOINTS
+# ==============================================================================
+
+@app.route('/api/tonometer', methods=['GET', 'POST'])
+@app.route('/api/pressure', methods=['GET', 'POST'])
+def handle_tonometer():
+    """
+    POST: Receive IOP pressure reading from ESP32 BLE Tonometer or WiFi gateway.
+    GET: Retrieve current live reading and device status.
+    """
+    global latest_tonometer_reading
+    
+    if request.method == 'GET':
+        return jsonify({
+            'success': True,
+            'reading': latest_tonometer_reading,
+            'device': latest_tonometer_reading.get('device_id', 'ESP32-BLE-Tonometer')
+        })
+
+    # POST handling
+    try:
+        data = request.get_json(silent=True) or request.form.to_dict() or {}
+        
+        # Read IOP or pressure value
+        iop_val = data.get('iop') if data.get('iop') is not None else data.get('pressure')
+        if iop_val is None:
+            return jsonify({
+                'error': 'Missing required pressure data. Provide {"iop": <number>} or {"pressure": <number>}'
+            }), 400
+
+        iop = round(float(iop_val), 1)
+        raw_adc = data.get('raw_adc') or data.get('raw')
+        patient_id = data.get('patient_id') or None
+        patient_name = data.get('patient_name') or None
+        eye_type = data.get('eye_type', 'OD (Right Eye)')
+        device_id = data.get('device_id', 'ESP32-BLE-Tonometer')
+        notes = data.get('notes', 'Real-time BLE Tonometer probe measurement.')
+
+        status, risk_desc, alert_class = classify_iop(iop)
+
+        reading_doc = {
+            'iop': iop,
+            'raw_adc': int(raw_adc) if raw_adc is not None else None,
+            'status': status,
+            'risk_level': risk_desc,
+            'alert_class': alert_class,
+            'patient_id': patient_id,
+            'patient_name': patient_name,
+            'eye_type': eye_type,
+            'device_id': device_id,
+            'notes': notes,
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+
+        # Update in-memory state
+        latest_tonometer_reading = dict(reading_doc)
+        local_tonometer_readings.insert(0, reading_doc)
+        if len(local_tonometer_readings) > 100:
+            local_tonometer_readings.pop()
+
+        # Save into MongoDB tonometer collection
+        mongo_id = None
+        ton_col = get_tonometer_collection()
+        if ton_col is not None:
+            try:
+                res = ton_col.insert_one(dict(reading_doc))
+                mongo_id = str(res.inserted_id)
+                reading_doc['id'] = mongo_id
+                print(f"[INFO] Tonometer reading stored in MongoDB with ID: {mongo_id}")
+            except Exception as e:
+                print(f"[WARNING] MongoDB tonometer insertion error: {e}")
+
+        # If a patient_id was specified, link/update IOP on that patient's latest record
+        if patient_id:
+            col = get_db_collection()
+            if col is not None:
+                try:
+                    col.update_many(
+                        {'patient_id': patient_id},
+                        {'$set': {'iop': iop, 'last_tonometer_sync': reading_doc['timestamp']}}
+                    )
+                except Exception as e:
+                    print(f"[WARNING] Could not update patient IOP in scans: {e}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Tonometer reading recorded successfully.',
+            'id': mongo_id or f"local-{len(local_tonometer_readings)}",
+            'iop': iop,
+            'status': status,
+            'risk_level': risk_desc,
+            'patient_id': patient_id,
+            'timestamp': reading_doc['timestamp']
+        }), 201
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to process tonometer reading: {str(e)}'}), 500
+
+@app.route('/api/tonometer/latest', methods=['GET'])
+@app.route('/api/pressure/latest', methods=['GET'])
+def get_latest_tonometer():
+    """Retrieve the single most recent IOP pressure reading recorded by any ESP32 tonometer."""
+    return jsonify({
+        'success': True,
+        'reading': latest_tonometer_reading
+    })
+
+@app.route('/api/tonometer/history', methods=['GET'])
+@app.route('/api/pressure/history', methods=['GET'])
+def get_tonometer_history():
+    """Retrieve past tonometer readings (?patient_id=..., ?limit=50)."""
+    patient_id = request.args.get('patient_id')
+    limit = min(int(request.args.get('limit', 50)), 100)
+
+    ton_col = get_tonometer_collection()
+    records = []
+
+    if ton_col is not None:
+        try:
+            query = {'patient_id': patient_id} if patient_id else {}
+            cursor = ton_col.find(query).sort('timestamp', -1).limit(limit)
+            for d in cursor:
+                d['id'] = str(d.pop('_id'))
+                records.append(d)
+        except Exception as e:
+            print(f"[WARNING] MongoDB tonometer history error: {e}")
+
+    if not records:
+        if patient_id:
+            records = [t for t in local_tonometer_readings if t.get('patient_id') == patient_id][:limit]
+        else:
+            records = list(local_tonometer_readings)[:limit]
+
+    return jsonify({
+        'success': True,
+        'count': len(records),
+        'records': records
+    })
+
+# ==============================================================================
+# ESP32-CAM INGESTION ENDPOINT
+# ==============================================================================
+
+@app.route('/api/cam_predict', methods=['POST'])
+def cam_predict():
+    """Endpoint for ESP32-CAM to push a captured eye photo and run automated YOLO inference."""
+    try:
+        if request.content_type == 'image/jpeg':
+            image_bytes = request.data
+        elif 'image' in request.files:
+            image_bytes = request.files['image'].read()
+        else:
+            return jsonify({'error': 'Unsupported content type or missing image. Send JPEG binary or multipart form file "image".'}), 400
+
+        pil_img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        primary_class, confidence_pct, detections, img_url = run_inference(pil_img, conf_thresh=0.25)
+        thumbnail_b64 = generate_base64_thumbnail(pil_img, size=(180, 180))
+
+        patient_id = request.form.get('patient_id') or request.args.get('patient_id') or f"CAM-2026-{random.randint(1000, 9999)}"
+        patient_name = request.form.get('patient_name') or f"ESP32-CAM Capture ({patient_id})"
+        eye_type = request.form.get('eye_type', 'OD (Right Eye)')
+        
+        # Link current live tonometer IOP reading
+        current_iop = latest_tonometer_reading.get('iop', 18.0)
+        is_glaucoma = (primary_class.lower() == 'glaucoma')
+        severity = "High Cupping / Elevated Pressure" if (is_glaucoma and current_iop >= 22.0) else ("Confirmed Glaucoma" if is_glaucoma else "Healthy Normal Retina")
+
+        record = {
+            'patient_id': patient_id,
+            'patient_name': patient_name,
+            'age': 55,
+            'gender': 'Unspecified',
+            'eye_type': eye_type,
+            'iop': current_iop,
+            'cup_disc_ratio': 0.7 if is_glaucoma else 0.35,
+            'notes': f"Direct ESP32-CAM optical capture. Paired with Tonometer IOP: {current_iop} mmHg.",
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'filename': f"esp32_cam_{patient_id}.jpg",
+            'prediction': primary_class,
+            'confidence': confidence_pct,
+            'severity': severity,
+            'expected_class': None,
+            'accuracy_match': None,
+            'detections_count': len(detections),
+            'detections': detections,
+            'thumbnail': thumbnail_b64 if thumbnail_b64 else img_url,
+            'image_url': img_url,
+            'is_glaucoma': is_glaucoma,
+            'source': 'ESP32-CAM'
+        }
+
+        # Store in MongoDB
+        mongo_doc_id = None
+        col = get_db_collection()
+        if col is not None:
+            try:
+                res = col.insert_one(record)
+                mongo_doc_id = str(res.inserted_id)
+                record['id'] = mongo_doc_id
+            except Exception as e:
+                print(f"[WARNING] Could not save CAM scan to MongoDB: {e}")
+
+        if not mongo_doc_id:
+            record['id'] = f"local-cam-{len(local_patient_records)+1}"
+        local_patient_records.insert(0, record)
+
+        return jsonify({
+            'success': True,
+            'prediction': primary_class,
+            'confidence': confidence_pct,
+            'severity': severity,
+            'iop_linked': current_iop,
+            'record_id': record['id'],
+            'image_url': img_url
+        }), 201
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'CAM prediction failed: {str(e)}'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

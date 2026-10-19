@@ -166,6 +166,161 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ==========================================================================
+    // BLE Tonometer & IOP Biomarker Logic
+    // ==========================================================================
+    const iopRiskBadge = document.getElementById('iopRiskBadge');
+    const btnBleConnect = document.getElementById('btnBleConnect');
+    const bleBtnText = document.getElementById('bleBtnText');
+    const btnSyncCloudTonometer = document.getElementById('btnSyncCloudTonometer');
+    const bleStatusStrip = document.getElementById('bleStatusStrip');
+    const bleStatusText = document.getElementById('bleStatusText');
+
+    function updateIopRiskBadge(val) {
+        const num = parseFloat(val);
+        if (isNaN(num) || !iopRiskBadge) return;
+        if (num < 10.0) {
+            iopRiskBadge.textContent = 'Hypotony (<10 mmHg)';
+            iopRiskBadge.className = 'iop-risk-pill badge-borderline';
+        } else if (num <= 21.0) {
+            iopRiskBadge.textContent = 'Normal (10-21 mmHg)';
+            iopRiskBadge.className = 'iop-risk-pill badge-normal';
+        } else if (num <= 24.0) {
+            iopRiskBadge.textContent = 'Borderline (21-24 mmHg)';
+            iopRiskBadge.className = 'iop-risk-pill badge-borderline';
+        } else {
+            iopRiskBadge.textContent = 'High Glaucoma Risk (>24 mmHg)';
+            iopRiskBadge.className = 'iop-risk-pill badge-high';
+        }
+    }
+
+    if (patientIopInput) {
+        patientIopInput.addEventListener('input', (e) => updateIopRiskBadge(e.target.value));
+        updateIopRiskBadge(patientIopInput.value);
+    }
+
+    // Web Bluetooth API Integration
+    let bleDevice = null;
+    let bleServer = null;
+    const TONOMETER_SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+    const TONOMETER_CHAR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+    if (btnBleConnect) {
+        btnBleConnect.addEventListener('click', async () => {
+            if (!navigator.bluetooth) {
+                alert('Web Bluetooth is supported on Google Chrome, Microsoft Edge, and Android browsers. For other browsers, please use the "Cloud Sync" button to fetch live ESP32 readings via Wi-Fi!');
+                return;
+            }
+
+            try {
+                if (bleStatusStrip) bleStatusStrip.className = 'ble-status-strip connecting';
+                if (bleStatusText) bleStatusText.textContent = 'Pairing with ESP32 Tonometer...';
+
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [
+                        { namePrefix: 'ESP32' },
+                        { namePrefix: 'Tonometer' },
+                        { name: 'ESP32_Tonometer' }
+                    ],
+                    optionalServices: [TONOMETER_SERVICE_UUID, 'battery_service', 'environmental_sensing']
+                });
+
+                if (bleStatusText) bleStatusText.textContent = `Connecting to ${bleDevice.name || 'ESP32'}...`;
+                bleDevice.addEventListener('gattserverdisconnected', onBleDisconnected);
+
+                bleServer = await bleDevice.gatt.connect();
+
+                let service;
+                try {
+                    service = await bleServer.getPrimaryService(TONOMETER_SERVICE_UUID);
+                } catch (e) {
+                    const services = await bleServer.getPrimaryServices();
+                    if (services.length > 0) service = services[0];
+                }
+
+                if (service) {
+                    const characteristics = await service.getCharacteristics();
+                    for (const char of characteristics) {
+                        if (char.properties.notify || char.properties.read) {
+                            try {
+                                await char.startNotifications();
+                                char.addEventListener('characteristicvaluechanged', (evt) => {
+                                    const valStr = new TextDecoder().decode(evt.target.value).trim();
+                                    const parsedIop = parseFloat(valStr);
+                                    if (!isNaN(parsedIop)) {
+                                        if (patientIopInput) {
+                                            patientIopInput.value = parsedIop.toFixed(1);
+                                            updateIopRiskBadge(parsedIop);
+                                        }
+                                        if (bleStatusText) {
+                                            bleStatusText.textContent = `Live BLE: ${parsedIop.toFixed(1)} mmHg (${bleDevice.name || 'ESP32'})`;
+                                        }
+                                    }
+                                });
+                            } catch (err) {
+                                console.warn('Notification start error:', err);
+                            }
+                        }
+                    }
+                }
+
+                if (bleStatusStrip) bleStatusStrip.className = 'ble-status-strip connected';
+                if (btnBleConnect) {
+                    btnBleConnect.classList.add('connected');
+                    if (bleBtnText) bleBtnText.textContent = 'BLE Connected';
+                }
+                if (bleStatusText) bleStatusText.textContent = `Connected: ${bleDevice.name || 'ESP32'} • Live IOP streaming`;
+                showToast(`✅ BLE Tonometer connected! Streaming pressure data.`);
+
+            } catch (err) {
+                console.error('BLE connection error:', err);
+                onBleDisconnected();
+                if (err.name !== 'NotFoundError') {
+                    showToast(`BLE: ${err.message}`);
+                }
+            }
+        });
+    }
+
+    function onBleDisconnected() {
+        if (bleStatusStrip) bleStatusStrip.className = 'ble-status-strip';
+        if (btnBleConnect) {
+            btnBleConnect.classList.remove('connected');
+            if (bleBtnText) bleBtnText.textContent = 'Connect BLE';
+        }
+        if (bleStatusText) bleStatusText.textContent = 'BLE Tonometer: Disconnected';
+    }
+
+    // Cloud Sync from ESP32 Backend
+    if (btnSyncCloudTonometer) {
+        btnSyncCloudTonometer.addEventListener('click', async () => {
+            try {
+                btnSyncCloudTonometer.disabled = true;
+                const res = await fetch('/api/tonometer/latest');
+                const data = await res.json();
+                if (data.success && data.reading) {
+                    const iopVal = data.reading.iop || 18.0;
+                    if (patientIopInput) {
+                        patientIopInput.value = iopVal;
+                        updateIopRiskBadge(iopVal);
+                    }
+                    if (bleStatusText) {
+                        const timeStr = data.reading.timestamp ? new Date(data.reading.timestamp).toLocaleTimeString() : 'Recent';
+                        bleStatusText.textContent = `Cloud Synced: ${iopVal} mmHg (${data.reading.device_id || 'ESP32'} @ ${timeStr})`;
+                    }
+                    showToast(`Cloud Sync: ${iopVal} mmHg received from ESP32!`);
+                } else {
+                    showToast('No active cloud reading yet.');
+                }
+            } catch (e) {
+                console.error('Sync tonometer error:', e);
+                showToast('Failed to fetch from cloud.');
+            } finally {
+                btnSyncCloudTonometer.disabled = false;
+            }
+        });
+    }
+
     // Direct submit to Patient List
     if (btnSubmitPatient) {
         btnSubmitPatient.addEventListener('click', async () => {
@@ -186,6 +341,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const status = patientGlaucomaStatus ? patientGlaucomaStatus.value : 'Glaucoma';
             const isGlaucoma = (status.toLowerCase() === 'glaucoma');
+            const iop = parseFloat(patientIopInput ? patientIopInput.value : 18.0) || 18.0;
+            const eyeType = patientEyeInput ? patientEyeInput.value : 'OD (Right Eye)';
 
             btnSubmitPatient.disabled = true;
             const originalContent = btnSubmitPatient.innerHTML;
@@ -202,13 +359,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         patient_name: name,
                         age: age,
                         status: status,
-                        glaucoma_present: isGlaucoma
+                        glaucoma_present: isGlaucoma,
+                        iop: iop,
+                        eye_type: eyeType
                     })
                 });
 
                 const data = await res.json();
                 if (data.success) {
-                    showToast(`✅ Patient ${name} added to patient list!`);
+                    showToast(`✅ Patient ${name} added with IOP ${iop} mmHg!`);
                     
                     // Reset input fields
                     if (patientNameInput) patientNameInput.value = '';

@@ -2175,3 +2175,172 @@ body {
     }
 }
 
+/* ==========================================================================
+   BLE Tonometer & IOP Interactive Controls
+   ========================================================================== */
+.tonometer-field-box {
+    background: var(--bg-surface-subtle);
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    transition: var(--transition);
+}
+
+.tonometer-field-box:hover {
+    border-color: var(--border-focus);
+}
+
+.tonometer-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.65rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.iop-risk-pill {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.22rem 0.65rem;
+    border-radius: var(--radius-full);
+    transition: var(--transition);
+}
+
+.iop-risk-pill.badge-normal {
+    background: var(--normal-bg);
+    color: var(--normal-primary);
+    border: 1px solid var(--normal-border);
+}
+
+.iop-risk-pill.badge-borderline {
+    background: var(--warning-bg);
+    color: var(--warning-primary);
+    border: 1px solid var(--warning-border);
+}
+
+.iop-risk-pill.badge-high {
+    background: var(--glaucoma-bg);
+    color: var(--glaucoma-primary);
+    border: 1px solid var(--glaucoma-border);
+    animation: pulse 1.8s infinite;
+}
+
+.iop-input-cluster {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.iop-input-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 120px;
+}
+
+.input-iop {
+    padding-right: 3.5rem !important;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    font-family: var(--font-mono) !important;
+    color: var(--text-primary) !important;
+}
+
+.iop-unit {
+    position: absolute;
+    right: 0.85rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+.tonometer-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-ble-connect {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%);
+    color: #ffffff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 0.95rem;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(2, 132, 199, 0.25);
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.btn-ble-connect:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(2, 132, 199, 0.4);
+}
+
+.btn-ble-connect.connected {
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35);
+}
+
+.btn-sync-cloud {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 0.9rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.btn-sync-cloud:hover {
+    border-color: var(--border-focus);
+    color: var(--primary-600);
+}
+
+.ble-status-strip {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.65rem;
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+}
+
+.ble-status-strip .indicator-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-subtle);
+    flex-shrink: 0;
+}
+
+.ble-status-strip.connected .indicator-dot {
+    background: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.7);
+    animation: pulse 1.5s infinite;
+}
+
+.ble-status-strip.connecting .indicator-dot {
+    background: #f59e0b;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+    animation: pulse 0.8s infinite;
+}
+
