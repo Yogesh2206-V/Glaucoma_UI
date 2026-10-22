@@ -88,6 +88,118 @@ def classify_iop(iop_val):
     else:
         return 'High Risk', 'High Glaucoma Risk (>24 mmHg - Ocular Hypertension)', 'alert-danger'
 
+def evaluate_patient_progression(current_data, previous_record):
+    """
+    Compare current scan/clinical biomarkers against patient's previous historical record
+    to evaluate clinical improvement or disease progression.
+    """
+    if not previous_record:
+        return {
+            'has_baseline': False,
+            'is_improved': None,
+            'trend': 'Baseline',
+            'status_label': 'First Recorded Baseline Exam',
+            'summary': 'No previous clinical record found for this patient. This examination establishes the baseline profile.',
+            'previous_record': None,
+            'delta_metrics': None
+        }
+
+    prev_diag = previous_record.get('prediction', 'Unknown')
+    curr_diag = current_data.get('prediction', 'Unknown')
+
+    prev_iop = float(previous_record.get('iop', 18.0) or 18.0)
+    curr_iop = float(current_data.get('iop', 18.0) or 18.0)
+    iop_delta = round(curr_iop - prev_iop, 1)  # negative means IOP dropped (good)
+
+    prev_conf = float(previous_record.get('confidence', 0.0) or 0.0)
+    curr_conf = float(current_data.get('confidence', 0.0) or 0.0)
+    conf_delta = round(curr_conf - prev_conf, 1)
+
+    prev_cdr = float(previous_record.get('cup_disc_ratio', 0.5) or 0.5)
+    curr_cdr = float(current_data.get('cup_disc_ratio', 0.5) or 0.5)
+    cdr_delta = round(curr_cdr - prev_cdr, 2)
+
+    is_improved = False
+    trend = 'Stable'
+    summary = ''
+
+    # Case 1: Glaucoma -> Normal
+    if prev_diag.lower() == 'glaucoma' and curr_diag.lower() == 'normal':
+        is_improved = True
+        trend = 'Improved'
+        summary = f"Significant clinical improvement: Optic disc and retinal nerve fiber layer cleared to Normal. IOP shifted from {prev_iop} to {curr_iop} mmHg."
+
+    # Case 2: Normal -> Glaucoma
+    elif prev_diag.lower() == 'normal' and curr_diag.lower() == 'glaucoma':
+        is_improved = False
+        trend = 'Deteriorated'
+        summary = f"New onset / Deterioration: Optic nerve examination now indicates Glaucoma (Confidence: {curr_conf}%). Urgent clinical intervention recommended."
+
+    # Case 3: Both Glaucoma
+    elif curr_diag.lower() == 'glaucoma':
+        if iop_delta <= -2.0:
+            is_improved = True
+            trend = 'Improved'
+            summary = f"Positive hypotensive improvement: Intraocular pressure decreased by {abs(iop_delta)} mmHg (from {prev_iop} to {curr_iop} mmHg), reflecting responsive clinical management."
+        elif iop_delta >= 2.0:
+            is_improved = False
+            trend = 'Deteriorated'
+            summary = f"Progression Risk / Deterioration: Intraocular pressure increased by +{iop_delta} mmHg (from {prev_iop} to {curr_iop} mmHg). Glaucomatous optic damage risk is heightened."
+        elif conf_delta <= -8.0:
+            is_improved = True
+            trend = 'Improved'
+            summary = f"Mild improvement: Glaucoma diagnostic confidence reduced from {prev_conf}% to {curr_conf}%. IOP is maintained at {curr_iop} mmHg."
+        elif conf_delta >= 8.0:
+            is_improved = False
+            trend = 'Deteriorated'
+            summary = f"Progression detected: Optic nerve cupping and axonal loss features more prominent (Confidence rose from {prev_conf}% to {curr_conf}%)."
+        else:
+            is_improved = False
+            trend = 'Stable'
+            summary = f"Condition Stable: Glaucoma pathology consistent with previous examination. IOP shifted by {iop_delta:+0.1f} mmHg."
+
+    # Case 4: Both Normal
+    else:
+        if curr_iop > 21.0 and prev_iop <= 21.0:
+            is_improved = False
+            trend = 'Deteriorated'
+            summary = f"Ocular hypertension warning: Retina appears normal, but IOP has spiked into hypertensive range ({curr_iop} mmHg vs previous {prev_iop} mmHg)."
+        elif curr_iop <= 21.0 and prev_iop > 21.0:
+            is_improved = True
+            trend = 'Improved'
+            summary = f"Improvement: Intraocular pressure normalized from {prev_iop} mmHg to {curr_iop} mmHg. Healthy normal retina maintained."
+        else:
+            is_improved = True
+            trend = 'Stable'
+            summary = f"Healthy & Stable: Retinal nerve and physiological biomarkers remain within healthy normal thresholds."
+
+    prev_summary = {
+        'id': previous_record.get('id', previous_record.get('patient_id')),
+        'patient_id': previous_record.get('patient_id'),
+        'patient_name': previous_record.get('patient_name'),
+        'timestamp': previous_record.get('timestamp'),
+        'prediction': prev_diag,
+        'confidence': prev_conf,
+        'iop': prev_iop,
+        'cup_disc_ratio': prev_cdr,
+        'severity': previous_record.get('severity', 'Previous exam'),
+        'notes': previous_record.get('notes', '')
+    }
+
+    return {
+        'has_baseline': True,
+        'is_improved': is_improved,
+        'trend': trend,
+        'status_label': f"{trend} Condition",
+        'summary': summary,
+        'previous_record': prev_summary,
+        'delta_metrics': {
+            'iop_change_mmHg': iop_delta,
+            'confidence_change_pct': conf_delta,
+            'cup_disc_ratio_change': cdr_delta
+        }
+    }
+
 # Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
@@ -541,10 +653,41 @@ def predict():
             'is_glaucoma': is_glaucoma
         }
 
+        # Look up previous examination for this patient
+        previous_record = None
+        col = get_db_collection()
+        if col is not None:
+            try:
+                q_or = []
+                if patient_id:
+                    q_or.append({'patient_id': patient_id})
+                if patient_name and not patient_name.startswith('Patient GLC-'):
+                    q_or.append({'patient_name': {'$regex': f"^{patient_name}$", '$options': 'i'}})
+                
+                if q_or:
+                    prev_doc = col.find_one({'$or': q_or}, sort=[('timestamp', -1)])
+                    if prev_doc:
+                        prev_doc['id'] = str(prev_doc.pop('_id'))
+                        previous_record = prev_doc
+            except Exception as e:
+                print(f"[WARNING] Finding previous patient record error: {e}")
+
+        if not previous_record:
+            for r in local_patient_records:
+                if (patient_id and r.get('patient_id') == patient_id) or \
+                   (patient_name and not patient_name.startswith('Patient GLC-') and r.get('patient_name', '').lower() == patient_name.lower()):
+                    previous_record = dict(r)
+                    break
+
+        # Clinical progression & improvement evaluation
+        progression = evaluate_patient_progression(record, previous_record)
+        record['progression'] = progression
+        record['is_improved'] = progression['is_improved']
+        record['trend'] = progression['trend']
+
         # Save record to MongoDB Atlas
         mongo_doc_id = None
         try:
-            col = get_db_collection()
             if col is not None:
                 res = col.insert_one(record)
                 mongo_doc_id = str(res.inserted_id)
@@ -563,6 +706,14 @@ def predict():
             'prediction': primary_class,
             'confidence': confidence_pct,
             'severity': severity,
+            'is_improved': progression['is_improved'],
+            'trend': progression['trend'],
+            'status_label': progression['status_label'],
+            'summary': progression['summary'],
+            'old_data': progression['previous_record'],
+            'previous_record': progression['previous_record'],
+            'delta_metrics': progression['delta_metrics'],
+            'progression_evaluation': progression,
             'detections': detections,
             'image_url': img_url,
             'db_saved': mongo_doc_id is not None,
@@ -580,7 +731,9 @@ def predict():
                 'prediction': primary_class,
                 'confidence': confidence_pct,
                 'severity': severity,
-                'is_glaucoma': is_glaucoma
+                'is_glaucoma': is_glaucoma,
+                'is_improved': progression['is_improved'],
+                'trend': progression['trend']
             }
         })
 
@@ -1223,9 +1376,39 @@ def cam_predict():
             'source': 'ESP32-CAM'
         }
 
+        # Look up previous examination for this patient
+        previous_record = None
+        col = get_db_collection()
+        if col is not None:
+            try:
+                q_or = []
+                if patient_id:
+                    q_or.append({'patient_id': patient_id})
+                if patient_name and not patient_name.startswith('ESP32-CAM Capture'):
+                    q_or.append({'patient_name': {'$regex': f"^{patient_name}$", '$options': 'i'}})
+                if q_or:
+                    prev_doc = col.find_one({'$or': q_or}, sort=[('timestamp', -1)])
+                    if prev_doc:
+                        prev_doc['id'] = str(prev_doc.pop('_id'))
+                        previous_record = prev_doc
+            except Exception as e:
+                print(f"[WARNING] Finding previous patient record error in CAM: {e}")
+
+        if not previous_record:
+            for r in local_patient_records:
+                if (patient_id and r.get('patient_id') == patient_id) or \
+                   (patient_name and not patient_name.startswith('ESP32-CAM Capture') and r.get('patient_name', '').lower() == patient_name.lower()):
+                    previous_record = dict(r)
+                    break
+
+        # Clinical progression & improvement evaluation
+        progression = evaluate_patient_progression(record, previous_record)
+        record['progression'] = progression
+        record['is_improved'] = progression['is_improved']
+        record['trend'] = progression['trend']
+
         # Store in MongoDB
         mongo_doc_id = None
-        col = get_db_collection()
         if col is not None:
             try:
                 res = col.insert_one(record)
@@ -1244,6 +1427,14 @@ def cam_predict():
             'confidence': confidence_pct,
             'severity': severity,
             'iop_linked': current_iop,
+            'is_improved': progression['is_improved'],
+            'trend': progression['trend'],
+            'status_label': progression['status_label'],
+            'summary': progression['summary'],
+            'old_data': progression['previous_record'],
+            'previous_record': progression['previous_record'],
+            'delta_metrics': progression['delta_metrics'],
+            'progression_evaluation': progression,
             'record_id': record['id'],
             'image_url': img_url
         }), 201

@@ -609,6 +609,52 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
 
+                // Longitudinal Progression & Improvement Banner
+                const progressionBanner = document.getElementById('progressionBanner');
+                const progressionTrendBadge = document.getElementById('progressionTrendBadge');
+                const progressionPrevDate = document.getElementById('progressionPrevDate');
+                const progressionSummaryText = document.getElementById('progressionSummaryText');
+                const progressionStatsStrip = document.getElementById('progressionStatsStrip');
+                const progPrevDiag = document.getElementById('progPrevDiag');
+                const progPrevIop = document.getElementById('progPrevIop');
+                const progDeltaIop = document.getElementById('progDeltaIop');
+
+                if (progressionBanner) {
+                    const prog = data.progression_evaluation || {};
+                    const trend = (data.trend || prog.trend || 'Baseline').toLowerCase();
+                    const hasBaseline = prog.has_baseline || data.old_data != null;
+
+                    progressionBanner.style.display = 'block';
+                    progressionBanner.className = `progression-banner ${trend}`;
+
+                    if (progressionTrendBadge) {
+                        progressionTrendBadge.className = `progression-pill ${trend}`;
+                        progressionTrendBadge.textContent = data.status_label || (trend.toUpperCase());
+                    }
+
+                    if (progressionSummaryText) {
+                        progressionSummaryText.textContent = data.summary || prog.summary || 'Exam recorded.';
+                    }
+
+                    if (hasBaseline && data.old_data) {
+                        if (progressionPrevDate) {
+                            const prevDate = data.old_data.timestamp ? new Date(data.old_data.timestamp).toLocaleDateString() : 'Previous Exam';
+                            progressionPrevDate.textContent = `Baseline Date: ${prevDate}`;
+                        }
+                        if (progressionStatsStrip) progressionStatsStrip.style.display = 'flex';
+                        if (progPrevDiag) progPrevDiag.textContent = data.old_data.prediction || '--';
+                        if (progPrevIop) progPrevIop.textContent = `${data.old_data.iop || '--'} mmHg`;
+                        if (progDeltaIop && prog.delta_metrics) {
+                            const delta = prog.delta_metrics.iop_change_mmHg;
+                            progDeltaIop.textContent = `${delta > 0 ? '+' : ''}${delta} mmHg`;
+                            progDeltaIop.style.color = delta < 0 ? '#059669' : (delta > 0 ? '#dc2626' : 'var(--text-primary)');
+                        }
+                    } else {
+                        if (progressionPrevDate) progressionPrevDate.textContent = 'First Registered Visit';
+                        if (progressionStatsStrip) progressionStatsStrip.style.display = 'none';
+                    }
+                }
+
                 resultBox.style.display = 'block';
                 showToast(`Record cataloged for ${data.patient_record.patient_name} (${data.patient_record.patient_id})`);
 
